@@ -9,6 +9,7 @@ from sklearn.cluster import DBSCAN
 import numpy as np
 
 # --- CONFIGURATIE ---
+# Pas dit aan naar de Test-URL van jouw n8n Webhook
 N8N_WEBHOOK_URL = "https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition"
 
 st.set_page_config(page_title="AI Gerber Analist (Live Data)", layout="wide")
@@ -23,7 +24,6 @@ def analyze_real_gerber(gerber_bytes):
     """
     Leest de echte Gerber in, haalt alle flitsen (pads) op en clustert ze met DBSCAN.
     """
-    # 1. Tijdelijk opslaan om in te lezen met gerbonara
     with tempfile.NamedTemporaryFile(delete=False, suffix=".gbr") as tmp:
         tmp.write(gerber_bytes)
         tmp_path = tmp.name
@@ -33,10 +33,9 @@ def analyze_real_gerber(gerber_bytes):
         layer = gerbonara.rs274x.GerberFile.open(tmp_path)
         
         pads = []
-        # 2. Zoek alle 'Flash' commando's (dit zijn meestal de component pads)
+        # Zoek alle pads, maar zonder de breekbare import. We checken gewoon de class-naam!
         for obj in layer.objects:
-            if isinstance(obj, gerbonara.cad.primitives.Flash):
-                # Haal X en Y op. We werken in millimeters (ervan uitgaande dat je file in mm is)
+            if type(obj).__name__ == 'Flash':
                 pads.append([obj.x, obj.y])
 
         if not pads:
@@ -44,13 +43,10 @@ def analyze_real_gerber(gerber_bytes):
 
         pads_array = np.array(pads)
 
-        # 3. Clustering! (Groeperen van pads die minder dan 0.8mm van elkaar liggen)
-        # 0.8mm is een veilige grens om pads van één component (zoals 0402 of BGA) bij elkaar te houden, 
-        # zonder dat ze samensmelten met de buurman.
+        # Clustering: groepeer pads die < 0.8mm van elkaar liggen
         clustering = DBSCAN(eps=0.8, min_samples=2).fit(pads_array)
         labels = clustering.labels_
 
-        # 4. Format de data voor Claude
         clusters_data = []
         for cluster_id in set(labels):
             if cluster_id == -1:
@@ -59,11 +55,9 @@ def analyze_real_gerber(gerber_bytes):
             cluster_points = pads_array[labels == cluster_id]
             pad_count = len(cluster_points)
             
-            # Bepaal het midden en de grootte van het component
             x_min, y_min = np.min(cluster_points, axis=0)
             x_max, y_max = np.max(cluster_points, axis=0)
             
-            # Schat de pitch (afstand tussen de eerste twee pads in het cluster)
             pitch_estimate = 0
             if pad_count >= 2:
                 dx = cluster_points[1][0] - cluster_points[0][0]
@@ -82,7 +76,7 @@ def analyze_real_gerber(gerber_bytes):
                 }
             })
             
-            # Beperk tot max 50 componenten om te voorkomen dat we Claude overbelasten tijdens de test
+            # Beperk tot max 50 componenten om te voorkomen dat we de API overbelasten
             if len(clusters_data) >= 50:
                 break
 
@@ -94,13 +88,15 @@ def analyze_real_gerber(gerber_bytes):
         return {"error": str(e)}
 
 def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders.gbr"):
-    """ Zelfde robuuste functie als eerder. """
+    """
+    Schrijft direct hard-coded RS-274X Gerber uit. Geen libraries nodig.
+    """
     def fmt(val): return str(int(round(float(val) * 100000)))
 
     lines = [
         "%FSLAX45Y45*%", "%MOMM*%", "%LPD*%", 
         "%ADD10C,0.1000*%", "D10*", "G01*",
-        f"X{fmt(0)}Y{fmt(0)}D02*", f"X{fmt(0.5)}Y{fmt(0.5)}D01*" # Testkruisje
+        f"X{fmt(0)}Y{fmt(0)}D02*", f"X{fmt(0.5)}Y{fmt(0.5)}D01*" 
     ]
     
     components = recognized_data.get("recognized_components", [])
@@ -110,71 +106,9 @@ def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders
         x_min, y_min = float(box.get("x_min", 0.0)), float(box.get("y_min", 0.0))
         x_max, y_max = float(box.get("x_max", 0.0)), float(box.get("y_max", 0.0))
         
-        # Trek het vierkant, met een kleine offset (0.2mm) zodat het koper er mooi binnen valt
+        # Trek het vierkant met een kleine offset (0.2mm) zodat het originele koper er mooi binnen valt
         x_min, y_min = x_min - 0.2, y_min - 0.2
         x_max, y_max = x_max + 0.2, y_max + 0.2
         
         lines.append(f"X{fmt(x_min)}Y{fmt(y_min)}D02*")
-        lines.append(f"X{fmt(x_max)}Y{fmt(y_min)}D01*")
-        lines.append(f"X{fmt(x_max)}Y{fmt(y_max)}D01*")
-        lines.append(f"X{fmt(x_min)}Y{fmt(y_max)}D01*")
-        lines.append(f"X{fmt(x_min)}Y{fmt(y_min)}D01*")
-        
-    lines.append("M02*")
-    with open(output_filename, "w") as f:
-        f.write("\n".join(lines) + "\n")
-    return output_filename
-
-
-# --- ACTIE ---
-if st.button("Start AI Analyse met Echte Data", type="primary"):
-    if not top_copper:
-        st.warning("Upload aub een Top Copper Gerber (.gbr) om te starten.")
-    else:
-        with st.spinner("Gerber wordt gelezen en geparseerd in Python (Dit kan even duren)..."):
-            
-            # Lees de fysieke data
-            spatial_data = analyze_real_gerber(top_copper.getvalue())
-            
-            if "error" in spatial_data:
-                st.error(f"Fout bij lezen Gerber: {spatial_data['error']}")
-            elif len(spatial_data.get("clusters", [])) == 0:
-                st.warning("Geen componenten gevonden met de huidige clustering-instellingen.")
-            else:
-                st.info(f"{len(spatial_data['clusters'])} pad-clusters gevonden! Verzenden naar Claude (n8n)...")
-                
-                payload = {"pcb_spatial_data": spatial_data}
-                headers = {'Content-Type': 'application/json'}
-                
-                try:
-                    # Verstuur naar n8n
-                    response = requests.post(N8N_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
-                    
-                    if response.status_code == 200:
-                        n8n_data = response.json()
-                        raw_text = n8n_data.get("output", "")
-                        
-                        # Anti-markdown fix
-                        if "```json" in raw_text:
-                            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                        elif "```" in raw_text:
-                            raw_text = raw_text.split("```")[1].split("```")[0].strip()
-                            
-                        ai_result = json.loads(raw_text)
-                        
-                        st.success("✅ Workflow geslaagd!")
-                        st.json(ai_result)
-                        
-                        output_file = write_raw_gerber_boxes(ai_result)
-                        
-                        with open(output_file, "rb") as file:
-                            st.download_button(
-                                label="📥 Download AI Kaders Gerber (.gbr)",
-                                data=file,
-                                file_name="ai_component_kaders.gbr",
-                                mime="application/octet-stream"
-                            )
-                    else:
-                        st.error(f"Fout vanuit n8n (HTTP {response.status_code})")
-                except Exception as e:
-                    st.error(f"Netwerkfout met n8n: {e}")
+        lines.append(f"X{fmt(x_max)}Y{fmt(y_
