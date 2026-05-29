@@ -6,7 +6,7 @@ import os
 import gerbonara
 
 # --- CONFIGURATIE ---
-N8N_WEBHOOK_URL = "[https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition](https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition)"
+N8N_WEBHOOK_URL = "https://ravoortt.app.n8n.cloud/webhook-test/ff70e4f4-afb8-4faa-91b9-bb4046bdc2c9"
 
 st.set_page_config(page_title="AI Gerber Analist (Puur AI Logica)", layout="wide")
 st.title("Stap 2: AI als het Brein")
