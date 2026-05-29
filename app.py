@@ -3,7 +3,7 @@ import requests
 import json
 import gerbonara
 from gerbonara.cad.primitives import Line
-from gerbonara.cam import FileSettings
+from gerbonara.apertures import CircleAperture
 
 # --- JOUW N8N WEBHOOK URL ---
 N8N_WEBHOOK_URL = "https://ravoortt.app.n8n.cloud/webhook-test/ff70e4f4-afb8-4faa-91b9-bb4046bdc2c9"
