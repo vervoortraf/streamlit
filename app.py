@@ -51,12 +51,11 @@ def draw_bounding_box_gerber(recognized_data, output_filename="ai_component_kade
     Maakt een compleet nieuwe Gerber layer en tekent vierkanten (bounding boxes) 
     op basis van de output van de n8n AI Agent.
     """
-    # Maak een nieuw, leeg Gerber bestand aan met standaard mm instellingen
-    settings = FileSettings(unit='mm', number_format=(4,5), zeros='trailing')
-    layer = gerbonara.rs274x.GerberFile(settings=settings)
+    # Maak een nieuw, leeg Gerber bestand aan ZONDER de settings parameter
+    layer = gerbonara.rs274x.GerberFile()
     
     # We definiëren een dunne lijn (aperture) om de vierkanten mee te tekenen (bijv. 0.1mm breed)
-    aperture = layer.add_aperture(gerbonara.apertures.CircleAperture(0.1, unit='mm'))
+    aperture = layer.add_aperture(CircleAperture(0.1, unit='mm'))
 
     for comp in recognized_data.get("recognized_components", []):
         box = comp["bounding_box"]
@@ -64,7 +63,7 @@ def draw_bounding_box_gerber(recognized_data, output_filename="ai_component_kade
         x_max, y_max = box["x_max"], box["y_max"]
         
         # Trek de 4 lijnen van het vierkant
-        # Lijn 1: onderkant (x_min, y_min) naar (x_max, y_min)
+        # Lijn 1: onderkant
         layer.objects.append(Line(x_min, y_min, x_max, y_min, aperture=aperture))
         # Lijn 2: rechterkant
         layer.objects.append(Line(x_max, y_min, x_max, y_max, aperture=aperture))
@@ -72,10 +71,6 @@ def draw_bounding_box_gerber(recognized_data, output_filename="ai_component_kade
         layer.objects.append(Line(x_max, y_max, x_min, y_max, aperture=aperture))
         # Lijn 4: linkerkant
         layer.objects.append(Line(x_min, y_max, x_min, y_min, aperture=aperture))
-        
-        # Opmerking: Gerbonara heeft geen ingebouwde true-type font renderer voor de tekst-labels direct in RS-274X,
-        # In een latere fase kun je stroke-fonts toevoegen. We slaan de tekst als referentie nu even over, 
-        # of je tekent het met losse Line-objecten in je finale applicatie.
         
     layer.save(output_filename)
     return output_filename
