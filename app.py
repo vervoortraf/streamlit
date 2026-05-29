@@ -3,85 +3,55 @@ import requests
 import json
 import tempfile
 import os
-import math
 import gerbonara
-from sklearn.cluster import DBSCAN
-import numpy as np
 
 # --- CONFIGURATIE ---
-# Pas dit aan naar de Test-URL van jouw n8n Webhook
-N8N_WEBHOOK_URL = "https://ravoortt.app.n8n.cloud/webhook-test/ff70e4f4-afb8-4faa-91b9-bb4046bdc2c9"
+N8N_WEBHOOK_URL = "[https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition](https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition)"
 
-st.set_page_config(page_title="AI Gerber Analist (Live Data)", layout="wide")
-st.title("Stap 2: Analyse met Échte Gerber Data")
+st.set_page_config(page_title="AI Gerber Analist (Puur AI Logica)", layout="wide")
+st.title("Stap 2: AI als het Brein")
 
-st.info("Upload je Top Copper (.gbr). Python clustert de pads en Claude herkent de componenten.")
+st.info("Upload je Top Copper (.gbr). Python leest enkel de rauwe coördinaten. De AI doet 100% van het cluster- en denkwerk.")
 
 top_copper = st.file_uploader("Upload Top Copper Gerber (.gbr)", type=['gbr', 'pho', 'art'])
 
-# --- HELPER FUNCTIES ---
-def analyze_real_gerber(gerber_bytes):
+def extract_raw_pads(gerber_bytes):
     """
-    Leest de echte Gerber in, haalt alle flitsen (pads) op en clustert ze met DBSCAN.
+    Python als de 'ogen'. Het haalt puur de X/Y locaties op, ZONDER enige logica of clustering toe te passen.
     """
     with tempfile.NamedTemporaryFile(delete=False, suffix=".gbr") as tmp:
         tmp.write(gerber_bytes)
         tmp_path = tmp.name
 
     try:
-        # Lees het bestand in
         layer = gerbonara.rs274x.GerberFile.open(tmp_path)
         
-        pads = []
-        # Zoek alle pads, maar zonder de breekbare import. We checken gewoon de class-naam!
+        raw_pads = []
+        pad_id = 0
+        
+        # We halen domweg elke 'Flash' (pad) op
         for obj in layer.objects:
             if type(obj).__name__ == 'Flash':
-                pads.append([obj.x, obj.y])
-
-        if not pads:
-            return {"error": "Geen pads (Flashes) gevonden in deze Gerber. Zorg dat het de Paste- of Copperlaag is."}
-
-        pads_array = np.array(pads)
-
-        # Clustering: groepeer pads die < 0.8mm van elkaar liggen
-        clustering = DBSCAN(eps=0.8, min_samples=2).fit(pads_array)
-        labels = clustering.labels_
-
-        clusters_data = []
-        for cluster_id in set(labels):
-            if cluster_id == -1:
-                continue # Negeer "ruis" (losse pads zonder buren)
-                
-            cluster_points = pads_array[labels == cluster_id]
-            pad_count = len(cluster_points)
-            
-            x_min, y_min = np.min(cluster_points, axis=0)
-            x_max, y_max = np.max(cluster_points, axis=0)
-            
-            pitch_estimate = 0
-            if pad_count >= 2:
-                dx = cluster_points[1][0] - cluster_points[0][0]
-                dy = cluster_points[1][1] - cluster_points[0][1]
-                pitch_estimate = round(math.sqrt(dx**2 + dy**2), 3)
-
-            clusters_data.append({
-                "cluster_id": f"Comp_{cluster_id}",
-                "pad_count": pad_count,
-                "estimated_pitch_mm": pitch_estimate,
-                "bounding_box": {
-                    "x_min": round(float(x_min), 3),
-                    "y_min": round(float(y_min), 3),
-                    "x_max": round(float(x_max), 3),
-                    "y_max": round(float(y_max), 3)
-                }
-            })
-            
-            # Beperk tot max 50 componenten om te voorkomen dat we de API overbelasten
-            if len(clusters_data) >= 50:
-                break
+                # We ronden af op 3 decimalen om de payload naar n8n compact te houden
+                raw_pads.append({
+                    "id": pad_id,
+                    "x": round(obj.x, 3),
+                    "y": round(obj.y, 3)
+                })
+                pad_id += 1
 
         os.remove(tmp_path)
-        return {"clusters": clusters_data}
+        
+        if not raw_pads:
+            return {"error": "Geen pads gevonden. Zorg dat het de juiste Gerber-laag is."}
+            
+        # Ter bescherming van de AI token limiet tijdens deze test, sturen we max 500 pads.
+        # In een zware productieomgeving kun je dit verhogen, mits je AI-model de context-lengte aankan.
+        if len(raw_pads) > 500:
+            st.warning(f"Let op: Deze printplaat heeft {len(raw_pads)} pads. Voor deze test sturen we er 500 naar Claude om een API-timeout te voorkomen.")
+            raw_pads = raw_pads[:500]
+
+        return {"raw_pads": raw_pads}
 
     except Exception as e:
         if os.path.exists(tmp_path): os.remove(tmp_path)
@@ -89,7 +59,7 @@ def analyze_real_gerber(gerber_bytes):
 
 def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders.gbr"):
     """
-    Schrijft direct hard-coded RS-274X Gerber uit. Geen libraries nodig.
+    Python als de 'handen'. Tekent de door de AI bedachte kaders in RS-274X.
     """
     def fmt(val): return str(int(round(float(val) * 100000)))
 
@@ -106,7 +76,7 @@ def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders
         x_min, y_min = float(box.get("x_min", 0.0)), float(box.get("y_min", 0.0))
         x_max, y_max = float(box.get("x_max", 0.0)), float(box.get("y_max", 0.0))
         
-        # Trek het vierkant met een kleine offset (0.2mm) zodat het originele koper er mooi binnen valt
+        # Marge om het kader iets groter te maken dan het koper
         x_min, y_min = x_min - 0.2, y_min - 0.2
         x_max, y_max = x_max + 0.2, y_max + 0.2
         
@@ -122,26 +92,24 @@ def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders
     return output_filename
 
 # --- ACTIE ---
-if st.button("Start AI Analyse met Echte Data", type="primary"):
+if st.button("Start AI Analyse (Puur Brein)", type="primary"):
     if not top_copper:
         st.warning("Upload aub een Top Copper Gerber (.gbr) om te starten.")
     else:
-        with st.spinner("Gerber wordt gelezen en geparseerd in Python (Dit kan even duren)..."):
+        with st.spinner("Python extraheert de rauwe coördinaten..."):
             
-            spatial_data = analyze_real_gerber(top_copper.getvalue())
+            spatial_data = extract_raw_pads(top_copper.getvalue())
             
             if "error" in spatial_data:
-                st.error(f"Fout bij lezen Gerber: {spatial_data['error']}")
-            elif len(spatial_data.get("clusters", [])) == 0:
-                st.warning("Geen componenten gevonden met de huidige clustering-instellingen.")
+                st.error(f"Fout: {spatial_data['error']}")
             else:
-                st.info(f"{len(spatial_data['clusters'])} pad-clusters gevonden! Verzenden naar Claude (n8n)...")
+                pad_count = len(spatial_data['raw_pads'])
+                st.info(f"{pad_count} ongefilterde pads gevonden. Claude gaat nu nadenken (dit duurt even)...")
                 
                 payload = {"pcb_spatial_data": spatial_data}
                 headers = {'Content-Type': 'application/json'}
                 
                 try:
-                    # Verstuur naar n8n
                     response = requests.post(N8N_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
                     
                     if response.status_code == 200:
@@ -156,7 +124,7 @@ if st.button("Start AI Analyse met Echte Data", type="primary"):
                             
                         ai_result = json.loads(raw_text)
                         
-                        st.success("✅ Workflow geslaagd!")
+                        st.success("✅ AI heeft de logica toegepast en de componenten samengesteld!")
                         st.json(ai_result)
                         
                         output_file = write_raw_gerber_boxes(ai_result)
