@@ -47,9 +47,9 @@ def extract_raw_pads(gerber_bytes):
             
         # Ter bescherming van de AI token limiet tijdens deze test, sturen we max 500 pads.
         # In een zware productieomgeving kun je dit verhogen, mits je AI-model de context-lengte aankan.
-        if len(raw_pads) > 500:
-            st.warning(f"Let op: Deze printplaat heeft {len(raw_pads)} pads. Voor deze test sturen we er 500 naar Claude om een API-timeout te voorkomen.")
-            raw_pads = raw_pads[:500]
+        if len(raw_pads) > 2000:
+            st.warning(f"Let op: Deze printplaat heeft {len(raw_pads)} pads. Voor deze test sturen we er 2000 naar Claude om een API-timeout te voorkomen.")
+            raw_pads = raw_pads[:2000]
 
         return {"raw_pads": raw_pads}
 
