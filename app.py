@@ -7,7 +7,7 @@ from gerbonara.apertures import CircleAperture
 
 # --- JOUW N8N WEBHOOK URL ---
 # Pas dit aan naar de Test-URL van jouw n8n Webhook
-N8N_WEBHOOK_URL = "https://jouw-n8n-instantie.n8n.cloud/webhook-test/component-recognition"
+N8N_WEBHOOK_URL = "https://ravoortt.app.n8n.cloud/webhook-test/ff70e4f4-afb8-4faa-91b9-bb4046bdc2c9"
 
 st.set_page_config(page_title="AI Gerber Component Herkenning", layout="wide")
 st.title("Stap 1: Component Herkenning & Gerber Kader Generatie")
@@ -82,4 +82,44 @@ def draw_bounding_box_gerber(recognized_data, output_filename="ai_component_kade
 
 # --- ACTIE ---
 if st.button("Start Component Herkenning", type="primary"):
-    if not
+    if not top_copper:
+        st.warning("Upload aub een dummy bestand (mag elk .gbr bestand zijn) om de trigger te starten.")
+    else:
+        with st.spinner("Ruimtelijke map wordt opgebouwd en naar Claude (n8n) gestuurd..."):
+            
+            # 1. Haal de context op
+            spatial_data = extract_spatial_data(top_copper)
+            
+            # 2. Maak de payload voor n8n
+            payload = {"pcb_spatial_data": spatial_data}
+            headers = {'Content-Type': 'application/json'}
+            
+            try:
+                # 3. Verstuur naar n8n
+                response = requests.post(N8N_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
+                
+                if response.status_code == 200:
+                    ai_result = response.json()
+                    st.success("✅ AI heeft de componenten geanalyseerd!")
+                    
+                    # Toon het JSON resultaat op het scherm
+                    st.json(ai_result)
+                    
+                    # 4. Teken de nieuwe Gerber laag
+                    output_file = draw_bounding_box_gerber(ai_result)
+                    
+                    # 5. Maak de download knop aan
+                    with open(output_file, "rb") as file:
+                        st.download_button(
+                            label="📥 Download AI Kaders Gerber (.gbr)",
+                            data=file,
+                            file_name="ai_component_kaders.gbr",
+                            mime="application/octet-stream"
+                        )
+                        st.info("Tip: Laad deze Gerber in je CAM software (bijv. GC-Prevue of GerbView) over je originele koperlaag heen om de kaders visueel te controleren.")
+                        
+                else:
+                    st.error(f"Fout vanuit n8n (HTTP {response.status_code}): {response.text}")
+                    
+            except Exception as e:
+                st.error(f"Er ging iets mis met de verbinding naar n8n: {e}")
