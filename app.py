@@ -111,4 +111,64 @@ def write_raw_gerber_boxes(recognized_data, output_filename="ai_component_kaders
         x_max, y_max = x_max + 0.2, y_max + 0.2
         
         lines.append(f"X{fmt(x_min)}Y{fmt(y_min)}D02*")
-        lines.append(f"X{fmt(x_max)}Y{fmt(y_
+        lines.append(f"X{fmt(x_max)}Y{fmt(y_min)}D01*")
+        lines.append(f"X{fmt(x_max)}Y{fmt(y_max)}D01*")
+        lines.append(f"X{fmt(x_min)}Y{fmt(y_max)}D01*")
+        lines.append(f"X{fmt(x_min)}Y{fmt(y_min)}D01*")
+        
+    lines.append("M02*")
+    with open(output_filename, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return output_filename
+
+# --- ACTIE ---
+if st.button("Start AI Analyse met Echte Data", type="primary"):
+    if not top_copper:
+        st.warning("Upload aub een Top Copper Gerber (.gbr) om te starten.")
+    else:
+        with st.spinner("Gerber wordt gelezen en geparseerd in Python (Dit kan even duren)..."):
+            
+            spatial_data = analyze_real_gerber(top_copper.getvalue())
+            
+            if "error" in spatial_data:
+                st.error(f"Fout bij lezen Gerber: {spatial_data['error']}")
+            elif len(spatial_data.get("clusters", [])) == 0:
+                st.warning("Geen componenten gevonden met de huidige clustering-instellingen.")
+            else:
+                st.info(f"{len(spatial_data['clusters'])} pad-clusters gevonden! Verzenden naar Claude (n8n)...")
+                
+                payload = {"pcb_spatial_data": spatial_data}
+                headers = {'Content-Type': 'application/json'}
+                
+                try:
+                    # Verstuur naar n8n
+                    response = requests.post(N8N_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
+                    
+                    if response.status_code == 200:
+                        n8n_data = response.json()
+                        raw_text = n8n_data.get("output", "")
+                        
+                        # Anti-markdown fix
+                        if "```json" in raw_text:
+                            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                        elif "```" in raw_text:
+                            raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                            
+                        ai_result = json.loads(raw_text)
+                        
+                        st.success("✅ Workflow geslaagd!")
+                        st.json(ai_result)
+                        
+                        output_file = write_raw_gerber_boxes(ai_result)
+                        
+                        with open(output_file, "rb") as file:
+                            st.download_button(
+                                label="📥 Download AI Kaders Gerber (.gbr)",
+                                data=file,
+                                file_name="ai_component_kaders.gbr",
+                                mime="application/octet-stream"
+                            )
+                    else:
+                        st.error(f"Fout vanuit n8n (HTTP {response.status_code}): {response.text}")
+                except Exception as e:
+                    st.error(f"Netwerkfout met n8n: {e}")
