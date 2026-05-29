@@ -109,8 +109,23 @@ if st.button("Start Component Herkenning", type="primary"):
                 response = requests.post(N8N_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
                 
                 if response.status_code == 200:
-                    ai_result = response.json()
-                    st.success("✅ Workflow geslaagd!")
+                    n8n_data = response.json()
+                    
+                    # --- DE ANTI-MARKDOWN FIX ---
+                    # Haal de ruwe tekst op uit n8n (waar de markdown nog in zit)
+                    raw_text = n8n_data.get("output", "")
+                    
+                    # Snij de ```json en ``` weg als de AI eigenwijs was
+                    if "```json" in raw_text:
+                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in raw_text:
+                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                        
+                    # Zet de schone tekst om naar een échte JSON/Dictionary
+                    ai_result = json.loads(raw_text)
+                    # -----------------------------
+                    
+                    st.success("✅ Workflow geslaagd! Markdown netjes weggepoetst.")
                     
                     st.json(ai_result)
                     
@@ -124,7 +139,7 @@ if st.button("Start Component Herkenning", type="primary"):
                             file_name="ai_component_kaders.gbr",
                             mime="application/octet-stream"
                         )
-                        st.info("Zelfs als de AI faalt, moet je nu een minuscuul lijntje op X:0 Y:0 zien in je CAM software.")
+                        st.info("Laad deze Gerber in je CAM software. Je zou nu de kaders op X:10 en X:20 moeten zien!")
                         
                 else:
                     st.error(f"Fout vanuit n8n (HTTP {response.status_code}): {response.text}")
